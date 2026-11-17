@@ -143,7 +143,8 @@ function saveCfg() { try { localStorage.setItem('kt_cfg', JSON.stringify(cfg)); 
 function bindNum(id, key) { const el = $(id); el.value = cfg[key]; el.oninput = () => { const v = parseFloat(el.value); if (v > 0) { cfg[key] = v; saveCfg(); } }; }
 bindNum('cDist', 'dist'); bindNum('cLimit', 'limit');
 function bindRange(id, key, out) { const el = $(id); el.value = cfg[key]; $(out).textContent = cfg[key]; el.oninput = () => { cfg[key] = +el.value; $(out).textContent = el.value; saveCfg(); }; }
-bindRange('cThr', 'thr', 'vThr'); bindRange('cMin', 'minArea', 'vMin');
+{ const el = $('cThr'); el.value = 80 - cfg.thr; $('vThr').textContent = el.value;
+  el.oninput = () => { cfg.thr = 80 - +el.value; $('vThr').textContent = el.value; saveCfg(); }; } bindRange('cMin', 'minArea', 'vMin');
 $('cSwap').checked = cfg.swap; $('cSwap').onchange = e => { cfg.swap = e.target.checked; saveCfg(); };
 $('cMask').checked = cfg.mask; $('cMask').onchange = e => { cfg.mask = e.target.checked; saveCfg(); };
 
@@ -368,70 +369,84 @@ function segInter(p, p2, q, q2) {
 function lineDisp(L) { const l = lines[L]; return [{x: l[0][0] * DW, y: l[0][1] * DH}, {x: l[1][0] * DW, y: l[1][1] * DH}]; }
 
 function track(blobs, t) {
-  const maxD = 0.15 * Math.hypot(DW, DH);
+  const diag = Math.hypot(DW, DH);
   const pairs = [];
   tracks.forEach((tr, i) => {
     const dt = t - tr.t, px = tr.cx + tr.vx * dt, py = tr.cy + tr.vy * dt;
+    // low-fps cameras: allow a larger jump, scaled by the track's own speed
+    const maxD = Math.max(0.2 * diag, 1.8 * Math.hypot(tr.vx, tr.vy) * dt);
     blobs.forEach((b, j) => { const d = Math.hypot(b.cx - px, b.cy - py); if (d < maxD) pairs.push([d, i, j]); });
   });
   pairs.sort((a, b) => a[0] - b[0]);
   const usedT = new Set(), usedB = new Set();
   const LA = lineDisp('A'), LB = lineDisp('B');
+  const mA = {x: (LA[0].x + LA[1].x) / 2, y: (LA[0].y + LA[1].y) / 2}, mB = {x: (LB[0].x + LB[1].x) / 2, y: (LB[0].y + LB[1].y) / 2};
+  const ab = {x: mB.x - mA.x, y: mB.y - mA.y};
   for (const [, i, j] of pairs) {
     if (usedT.has(i) || usedB.has(j)) continue;
     usedT.add(i); usedB.add(j);
     const tr = tracks[i], b = blobs[j], dt = Math.max(1e-3, t - tr.t);
     const p0 = {x: tr.cx, y: tr.cy}, p1 = {x: b.cx, y: b.cy};
-    if (tr.tA == null) { const u = segInter(p0, p1, LA[0], LA[1]); if (u != null) tr.tA = tr.t + u * dt; }
-    if (tr.tB == null) { const u = segInter(p0, p1, LB[0], LB[1]); if (u != null) tr.tB = tr.t + u * dt; }
+    let crossed = false;
+    if (tr.tA == null) { const u = segInter(p0, p1, LA[0], LA[1]); if (u != null) { tr.tA = tr.t + u * dt; crossed = true; } }
+    if (tr.tB == null) { const u = segInter(p0, p1, LB[0], LB[1]); if (u != null) { tr.tB = tr.t + u * dt; crossed = true; } }
     tr.vx = 0.6 * tr.vx + 0.4 * (b.cx - tr.cx) / dt; tr.vy = 0.6 * tr.vy + 0.4 * (b.cy - tr.cy) / dt;
     Object.assign(tr, {cx: b.cx, cy: b.cy, box: b, t, miss: 0, age: tr.age + 1});
-    if (tr.tA != null && tr.tB != null && !tr.done) {
-      tr.done = true;
+    // 1) count as soon as the car crosses ANY line (direction from its movement)
+    if (crossed && !tr.ev) {
+      const AtoB = ((p1.x - p0.x) * ab.x + (p1.y - p0.y) * ab.y) > 0;
+      tr.ev = addEvent(tr.id, (AtoB !== cfg.swap) ? 'in' : 'out', t);
+    }
+    // 2) speed once both lines are crossed
+    if (tr.tA != null && tr.tB != null && tr.speed == null && tr.ev) {
       const dts = Math.abs(tr.tB - tr.tA);
-      if (dts > 0.08) {
-        const sp = cfg.dist / dts * 3.6;
-        if (sp < 400) {
-          tr.speed = sp;
-          const dir = ((tr.tA < tr.tB) !== cfg.swap) ? 'in' : 'out';
-          addEvent(tr.id, dir, sp, t);
-        }
-      }
+      const sp = dts > 0.05 ? cfg.dist / dts * 3.6 : null;
+      tr.speed = (sp && sp < 300) ? sp : -1;
+      if (tr.speed > 0) setSpeed(tr.ev, sp);
     }
   }
   tracks.forEach((tr, i) => { if (!usedT.has(i)) tr.miss++; });
-  tracks = tracks.filter(tr => tr.miss <= 8);
+  tracks = tracks.filter(tr => tr.miss <= 15);
   blobs.forEach((b, j) => {
-    if (!usedB.has(j)) tracks.push({id: nextId++, cx: b.cx, cy: b.cy, vx: 0, vy: 0, box: b, t, miss: 0, age: 1, tA: null, tB: null, done: false, speed: null});
+    if (!usedB.has(j)) tracks.push({id: nextId++, cx: b.cx, cy: b.cy, vx: 0, vy: 0, box: b, t, miss: 0, age: 1, tA: null, tB: null, ev: null, speed: null});
   });
+  lastBlobCount = blobs.length;
 }
+let lastBlobCount = 0, procTimes = [];
 
 // ---------- Events & stats ----------
 function fmtSrcTime(t) {
   if (kind === 'camera' || kind === 'stream') return new Date().toLocaleTimeString('ru-RU');
   const m = Math.floor(t / 60), s = (t % 60).toFixed(1).padStart(4, '0'); return m + ':' + s;
 }
-function addEvent(id, dir, sp, t) {
-  const ev = {time: fmtSrcTime(t), clock: new Date().toLocaleString('ru-RU'), id, dir, speed: Math.round(sp), exceed: sp > cfg.limit, src: kind};
+function addEvent(id, dir, t) {
+  const ev = {time: fmtSrcTime(t), clock: new Date().toLocaleString('ru-RU'), id, dir, speed: null, exceed: false, src: kind};
   events.push(ev);
-  const tb = $('log'), tr = document.createElement('tr');
-  if (ev.exceed) tr.className = 'exc';
-  tr.innerHTML = `<td>${ev.time}</td><td>#${id}</td><td><span class="tag ${dir}">${dir === 'in' ? 'Келді' : 'Кетті'}</span></td><td><b>${ev.speed}</b>${ev.exceed ? ' ⚠' : ''}</td>`;
-  tb.prepend(tr);
+  const tb = $('log'), row = document.createElement('tr');
+  row.innerHTML = `<td>${ev.time}</td><td>#${id}</td><td><span class="tag ${dir}">${dir === 'in' ? 'Келді' : 'Кетті'}</span></td><td class="sp">…</td>`;
+  ev.row = row;
+  tb.prepend(row);
   while (tb.children.length > 300) tb.lastChild.remove();
+  refreshStats();
+  return ev;
+}
+function setSpeed(ev, sp) {
+  ev.speed = Math.round(sp); ev.exceed = sp > cfg.limit;
+  if (ev.row) { ev.row.querySelector('.sp').innerHTML = `<b>${ev.speed}</b>${ev.exceed ? ' ⚠' : ''}`; if (ev.exceed) ev.row.className = 'exc'; }
   refreshStats();
 }
 function refreshStats() {
   const ins = events.filter(e => e.dir === 'in').length, outs = events.length - ins;
+  const sp = events.filter(e => e.speed != null).map(e => e.speed);
   $('sIn').textContent = ins; $('sOut').textContent = outs; $('sAll').textContent = events.length;
-  $('sAvg').textContent = events.length ? Math.round(events.reduce((a, e) => a + e.speed, 0) / events.length) : '—';
-  $('sMax').textContent = events.length ? Math.max(...events.map(e => e.speed)) : '—';
+  $('sAvg').textContent = sp.length ? Math.round(sp.reduce((a, v) => a + v, 0) / sp.length) : '—';
+  $('sMax').textContent = sp.length ? Math.max(...sp) : '—';
   $('sEx').textContent = events.filter(e => e.exceed).length;
   if (!events.length) $('log').innerHTML = '';
 }
 function csv() {
   return 'Уақыт;Жазылған;№;Бағыт;Жылдамдық км/сағ;Шектен асты\n' +
-    events.map(e => [e.time, e.clock, e.id, e.dir === 'in' ? 'Келді' : 'Кетті', e.speed, e.exceed ? 'иә' : 'жоқ'].join(';')).join('\n');
+    events.map(e => [e.time, e.clock, e.id, e.dir === 'in' ? 'Келді' : 'Кетті', e.speed ?? '', e.exceed ? 'иә' : 'жоқ'].join(';')).join('\n');
 }
 $('bCopy').onclick = async () => {
   try { await navigator.clipboard.writeText(csv()); status('CSV буферге көшірілді (' + events.length + ' жол).'); }
@@ -471,15 +486,18 @@ function render(src) {
   vctx.fillStyle = '#fff'; vctx.font = '600 14px Manrope,sans-serif'; vctx.textAlign = 'center';
   vctx.fillText(cfg.dist + ' м', ((a1.x + a2.x) / 2 + (b1.x + b2.x) / 2) / 2, ((a1.y + a2.y) / 2 + (b1.y + b2.y) / 2) / 2);
   for (const tr of tracks) {
-    if (tr.miss > 0 || tr.age < 2) continue;
-    const b = tr.box, col = tr.speed == null ? '#ffffff' : (tr.speed > cfg.limit ? '#eb5757' : '#2ecc71');
+    if (tr.miss > 2 || tr.age < 2) continue;
+    const b = tr.box, col = !(tr.speed > 0) ? (tr.ev ? '#8cbcff' : '#ffffff') : (tr.speed > cfg.limit ? '#eb5757' : '#2ecc71');
     vctx.strokeStyle = col; vctx.lineWidth = 2; vctx.strokeRect(b.x, b.y, b.w, b.h);
-    const label = '#' + tr.id + (tr.speed != null ? '  ' + Math.round(tr.speed) + ' км/сағ' : '');
+    const label = '#' + tr.id + (tr.speed > 0 ? '  ' + Math.round(tr.speed) + ' км/сағ' : '');
     vctx.font = 'bold 13px Manrope,sans-serif'; const tw = vctx.measureText(label).width + 10;
     vctx.fillStyle = col; vctx.fillRect(b.x, b.y - 20, tw, 19);
     vctx.fillStyle = '#000'; vctx.textAlign = 'left'; vctx.fillText(label, b.x + 5, b.y - 6);
   }
-  $('sNow').textContent = 'Қазір кадрда: ' + tracks.filter(t => t.miss === 0 && t.age >= 2).length;
+  const fps = procTimes.length > 1 ? (procTimes.length - 1) / Math.max(0.01, procTimes[procTimes.length - 1] - procTimes[0]) : 0;
+  $('sNow').textContent = 'Қазір кадрда: ' + tracks.filter(t => t.miss === 0 && t.age >= 2).length +
+    ' • Кадр/с: ' + fps.toFixed(1) + ' • Табылған дақ: ' + lastBlobCount +
+    (src && bgFrames > 60 && lastBlobCount === 0 ? ' — көлік көрінбесе, «Сезімталдықты» арттырыңыз (жылжытқышты оңға)' : '');
 }
 
 function loop() {
@@ -491,7 +509,7 @@ function loop() {
     if (!running) t = null;
   }
   if (src && t != null) {
-    if (lastT != null && t < lastT - 0.01) { tracks = []; lastT = null; }
+    if (lastT != null && t < lastT - 0.01) { tracks = []; lastT = null; procTimes = []; }
     if (lastT == null || t > lastT + 1e-4) {
       pctx.drawImage(src, 0, 0, PW, PH);
       let blobs;
@@ -502,6 +520,7 @@ function loop() {
         render(src); return;
       }
       track(blobs, t);
+      procTimes.push(t); while (procTimes.length > 2 && procTimes[procTimes.length - 1] - procTimes[0] > 3) procTimes.shift();
       lastT = t;
     }
   }
