@@ -46,6 +46,7 @@ tr.exc td{background:rgba(235,87,87,.12)}
 .side{display:grid;gap:14px;align-content:start}
 .stream select,.stream input{font:inherit;background:#0d1c33;border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:8px;flex:1 1 220px;min-width:0}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 </head>
 <body>
 <header>
@@ -76,6 +77,7 @@ tr.exc td{background:rgba(235,87,87,.12)}
       </select>
       <input id="sUrl" type="url" placeholder="https://…/camera.mp4" style="display:none">
       <button id="bStream">🛣 Трасса камерасы</button>
+      <label class="filebtn">📄 M3U / M3U8<input type="file" id="m3u" accept=".m3u,.m3u8,audio/x-mpegurl,application/vnd.apple.mpegurl,application/x-mpegurl"></label>
     </div>
     <div id="status">Көзді таңдаңыз: демо, камера немесе бейне файл.</div>
     <div class="hint">А (жасыл) және В (сары) сызықтарының ұштарын саусақпен/тінтуірмен сүйреп, жолдың көлденеңіне қойыңыз. Екі сызықтың арасындағы <b>нақты қашықтықты метрмен</b> енгізіңіз (мысалы, жол белгісі, бағаналар арасы). Жылдамдық = қашықтық ÷ уақыт.</div>
@@ -163,6 +165,7 @@ function stopAll() {
   running = false;
   if (video.srcObject) { video.srcObject.getTracks().forEach(t => t.stop()); video.srcObject = null; }
   video.pause(); video.onerror = null; video.onended = null;
+  if (hls) { hls.destroy(); hls = null; }
 }
 
 $('bDemo').onclick = () => {
@@ -211,22 +214,92 @@ function loadStreamClip() {
   video.src = streamUrl + (streamUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
   video.play().catch(() => {});
 }
-$('bStream').onclick = () => {
-  const url = $('sCam').value === 'custom' ? $('sUrl').value.trim() : $('sCam').value;
-  if (!/^https?:\/\//.test(url)) { status('URL дұрыс емес.', true); return; }
+let hls = null;
+const isHlsUrl = u => /\.m3u8(\?|#|$)/i.test(u);
+
+function startStream(url, label, forceHls) {
   stopAll(); kind = 'stream'; streamUrl = url; streamDims = null;
+  const live = forceHls || isHlsUrl(url);
   video.crossOrigin = 'anonymous'; video.loop = false;
   video.onloadedmetadata = () => {
     const d = video.videoWidth + 'x' + video.videoHeight;
     if (d !== streamDims) { streamDims = d; setup(video.videoWidth, video.videoHeight); lines = JSON.parse(JSON.stringify(DEF_H)); }
     running = true; $('bPause').textContent = '⏸ Тоқтату';
-    status('Трасса камерасы: ' + $('sCam').selectedOptions[0].text + '. Әр ролик біткенде жаңасы жүктеледі.');
+    status('Ағын: ' + label + (live ? ' (HLS тікелей эфир).' : '. Әр ролик біткенде жаңасы жүктеледі.'));
   };
-  // when a clip ends, fetch the fresh one (but not more often than every 3 s)
-  video.onended = () => setTimeout(loadStreamClip, Math.max(0, 3000 - (performance.now() - streamLoadedAt)));
-  video.onerror = () => status('Ағын ашылмады. Бұл бетте сыртқы бейнеге тыйым салынған болуы мүмкін — HTML файлын браузерде тікелей ашыңыз, немесе URL/желіні тексеріңіз.', true);
+  video.onerror = () => status('Ағын ашылмады: сілтеме жұмыс істемейді немесе сервер басқа сайттан оқуға (CORS) рұқсат бермейді.', true);
   status('Ағын жүктелуде…');
-  loadStreamClip();
+  if (!live) {
+    // short MP4 clip that the server keeps rewriting: reload when it ends (not more often than every 3 s)
+    video.onended = () => setTimeout(loadStreamClip, Math.max(0, 3000 - (performance.now() - streamLoadedAt)));
+    loadStreamClip();
+    return;
+  }
+  if (window.Hls && Hls.isSupported()) {
+    hls = new Hls({liveSyncDurationCount: 3});
+    hls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) status('HLS қатесі: ' + d.details + '. Сілтемені немесе CORS рұқсатын тексеріңіз.', true); });
+    hls.loadSource(url); hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = url; video.play().catch(() => {});   // Safari / iPhone: native HLS
+  } else {
+    status('Бұл браузер HLS (.m3u8) ойната алмайды.', true);
+  }
+}
+
+$('bStream').onclick = async () => {
+  const url = $('sCam').value === 'custom' ? $('sUrl').value.trim() : $('sCam').value;
+  if (!/^https?:\/\//.test(url)) { status('URL дұрыс емес.', true); return; }
+  // a .m3u URL may be a list of cameras rather than a stream
+  if (/\.m3u(\?|#|$)/i.test(url)) {
+    try { const txt = await (await fetch(url)).text(); handleM3U(txt, url.split('/').pop(), url); }
+    catch (e) { status('M3U сілтемесін оқу мүмкін болмады (CORS немесе желі).', true); }
+    return;
+  }
+  startStream(url, $('sCam').selectedOptions[0].text);
+};
+
+// ---------- M3U / M3U8 ----------
+function parseM3U(text, base) {
+  const items = []; let name = null;
+  for (let l of text.split(/\r?\n/)) {
+    l = l.trim(); if (!l) continue;
+    if (l.startsWith('#EXTINF')) { name = l.slice(l.indexOf(',') + 1).trim() || null; continue; }
+    if (l.startsWith('#')) continue;
+    let url = l;
+    try { url = new URL(l, base || undefined).href; } catch (e) {}
+    items.push({name: name || decodeURIComponent(l.split('/').pop().split('?')[0]), url}); name = null;
+  }
+  return items;
+}
+function handleM3U(text, fname, baseUrl) {
+  if (!/^\s*(#EXTM3U|#EXTINF|https?:)/i.test(text) && !/#EXT/i.test(text)) { status('Бұл M3U файлына ұқсамайды.', true); return; }
+  // HLS media playlist (segments) → play it directly
+  if (/#EXT-X-(TARGETDURATION|MEDIA-SEQUENCE)/i.test(text)) {
+    if (baseUrl) { startStream(baseUrl, fname, true); return; }
+    const segs = text.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+    if (segs.length && segs.every(u => /^https?:\/\//i.test(u))) {
+      startStream(URL.createObjectURL(new Blob([text], {type: 'application/vnd.apple.mpegurl'})), fname, true);
+    } else {
+      status('Бұл HLS плейлистінде сегмент сілтемелері салыстырмалы. Файлдың өзін емес, оның интернеттегі URL-ін «Басқа URL…» өрісіне қойыңыз.', true);
+    }
+    return;
+  }
+  // list of cameras / channels (or HLS master playlist) → add to the dropdown
+  const items = parseM3U(text, baseUrl).filter(i => /^https?:\/\//i.test(i.url));
+  if (!items.length) { status('M3U ішінен http(s) сілтеме табылмады.', true); return; }
+  const sel = $('sCam'), custom = sel.querySelector('option[value="custom"]');
+  const grp = document.createElement('optgroup'); grp.label = 'M3U: ' + fname;
+  items.forEach(i => { const o = document.createElement('option'); o.value = i.url; o.textContent = i.name; grp.appendChild(o); });
+  sel.insertBefore(grp, custom);
+  sel.value = items[0].url; $('sUrl').style.display = 'none';
+  status(items.length + ' камера M3U-дан қосылды. Тізімнен таңдап, «Трасса камерасы» басыңыз.');
+  startStream(items[0].url, items[0].name);
+}
+$('m3u').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  handleM3U(await f.text(), f.name, null);
+  e.target.value = '';
 };
 
 $('bPause').onclick = () => {
