@@ -11,6 +11,7 @@
     Q / Esc        — выход
 """
 import argparse
+import os
 import time
 from collections import defaultdict
 
@@ -60,7 +61,9 @@ def main():
     ap.add_argument("--ocr-every", type=int, default=3, help="OCR каждые N кадров на машину")
     ap.add_argument("--min-car-h", type=int, default=60, help="Меньшие машины пропускаются")
     ap.add_argument("--lock-hits", type=int, default=4, help="Сколько одинаковых чтений = уверенность")
-    ap.add_argument("--no-show", action="store_true")
+    ap.add_argument("--no-show", action="store_true", help="Без окна (Colab, сервер)")
+    ap.add_argument("--save", default=None, help="Сохранить видео с разметкой, напр. result.mp4")
+    ap.add_argument("--max-frames", type=int, default=0, help="Остановиться после N кадров (0 — без лимита)")
     args = ap.parse_args()
 
     vehicles = YOLO(args.vehicle_model)
@@ -87,12 +90,28 @@ def main():
         cv2.namedWindow("Plate Zoom", cv2.WINDOW_NORMAL)
         cv2.setMouseCallback("Plate Zoom", on_mouse)
 
+    def finalize(tid):
+        tr = tracks.pop(tid)
+        lead = tr.leader()
+        if lead and not tr.saved and tr.hits[lead] >= 2:
+            if db.save(lead, tr.best_conf[lead], tr.hits[lead], tid, tr.best_img[lead]):
+                print(f"[+] {pretty(lead)}  (ID {tid}, уехал)")
+        if state["selected"] == tid:
+            state["selected"] = None
+
+    is_file = os.path.isfile(args.source)
     cap = open_source(args.source)
+    src_fps = cap.get(cv2.CAP_PROP_FPS) or 25
+    writer = None
     frame_idx, t0, fps = 0, time.time(), 0.0
 
     while True:
+        if args.max_frames and frame_idx >= args.max_frames:
+            break
         ok, frame = cap.read()
         if not ok:
+            if is_file:
+                break
             print("[!] Поток прервался, переподключаюсь...")
             cap.release()
             time.sleep(2)
@@ -142,15 +161,12 @@ def main():
 
         # Машина уехала: сохраняем лучший вариант
         for tid in [t for t, tr in tracks.items() if frame_idx - tr.last_seen > 30]:
-            tr = tracks.pop(tid)
-            lead = tr.leader()
-            if lead and not tr.saved and tr.hits[lead] >= 2:
-                if db.save(lead, tr.best_conf[lead], tr.hits[lead], tid, tr.best_img[lead]):
-                    print(f"[+] {pretty(lead)}  (ID {tid}, уехал)")
-            if state["selected"] == tid:
-                state["selected"] = None
+            finalize(tid)
 
-        if args.no_show:
+        if frame_idx % 100 == 0:
+            print(f"[i] кадр {frame_idx}, машин в кадре: {len(state['boxes'])}")
+
+        if args.no_show and not args.save:
             continue
 
         # ---------- Отрисовка ----------
@@ -192,7 +208,15 @@ def main():
             cv2.putText(panel, f"{ts[11:]}  {pretty(p)}", (10, 565 + i * 22),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 255, 180), 1)
 
-        cv2.imshow("Plate Zoom", np.hstack([vis, panel]))
+        out = np.hstack([vis, panel])
+        if args.save:
+            if writer is None:
+                writer = cv2.VideoWriter(args.save, cv2.VideoWriter_fourcc(*"mp4v"), src_fps,
+                                         (out.shape[1], out.shape[0]))
+            writer.write(out)
+        if args.no_show:
+            continue
+        cv2.imshow("Plate Zoom", out)
         key = cv2.waitKey(1) & 0xFF
         if key in (ord("q"), 27):
             break
@@ -201,8 +225,14 @@ def main():
         if key == ord("-"):
             state["follow_zoom"] = max(1.0, state["follow_zoom"] / 1.25)
 
+    for tid in list(tracks):
+        finalize(tid)
     cap.release()
-    cv2.destroyAllWindows()
+    if writer is not None:
+        writer.release()
+        print(f"[i] Видео сохранено: {args.save}")
+    if not args.no_show:
+        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
