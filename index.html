@@ -47,13 +47,47 @@ tr.exc td{background:rgba(235,87,87,.12)}
 .stream select,.stream input{font:inherit;background:#0d1c33;border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:8px;flex:1 1 220px;min-width:0}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+[hidden]{display:none!important}
+header{flex-wrap:wrap}
+.nav{margin-left:auto;display:flex;gap:6px}
+.nav button{padding:8px 12px}
+.nav button.act{background:var(--acc);color:#0a1628;border-color:var(--acc)}
+.badge{display:inline-block;min-width:20px;padding:0 6px;border-radius:10px;background:#0a1628;color:var(--acc);font-size:12px;margin-left:4px}
+.nav button.act .badge{background:#0a1628;color:var(--acc)}
+#viewPhotos{grid-template-columns:1fr}
+.ph-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.ph-head h2{margin:0;margin-right:auto}
+.ph-head select{font:inherit;background:#0d1c33;border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:8px}
+.ph-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.ph{background:#0d1c33;border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+.ph.ex{border-color:var(--bad)}
+.ph img{width:100%;display:block;cursor:zoom-in;background:#000}
+.ph .m{padding:8px 10px;font-size:13px;display:grid;gap:4px}
+.ph .sp{font-size:22px;font-weight:800}
+.ph.ex .sp{color:var(--bad)}
+.ph .mut{color:var(--mut);font-size:12px}
+.ph .acts{display:flex;gap:6px;padding:0 10px 10px}
+.ph .acts button{flex:1;padding:6px}
+#phEmpty{color:var(--mut);padding:30px 10px;text-align:center}
+.lb{position:fixed;inset:0;background:rgba(0,0,0,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:50;padding:14px;gap:10px}
+.lb[hidden]{display:none}
+.lb img{max-width:100%;max-height:80vh;border-radius:8px}
+.lb .x{position:absolute;top:12px;right:12px}
+.camlink{cursor:pointer}
+</style>
 </head>
 <body>
 <header>
   <div class="logo">🚗</div>
   <div><h1>Жол камерасы: санақ және жылдамдық</h1><p>Келген / кеткен көліктер • А–В сызықтары арқылы жылдамдық өлшеу</p></div>
+  <nav class="nav">
+    <button id="tabCam" class="act">🎥 Камера</button>
+    <button id="tabPh">📸 Фотофиксация<span class="badge" id="phCount">0</span></button>
+  </nav>
 </header>
-<main>
+<main id="viewCam">
   <section class="card">
     <canvas id="view" width="960" height="540"></canvas>
     <video id="video" playsinline muted style="display:none"></video>
@@ -106,6 +140,8 @@ tr.exc td{background:rgba(235,87,87,.12)}
         <label>Мин. көлік өлшемі <span id="vMin"></span><input type="range" id="cMin" min="2" max="60" value="6"></label>
         <label class="chk"><input type="checkbox" id="cSwap"> Бағытты ауыстыру</label>
         <label class="chk"><input type="checkbox" id="cMask"> Қозғалыс маскасы</label>
+        <label class="chk"><input type="checkbox" id="cPhoto"> 📸 Фотофиксация</label>
+        <label class="chk"><input type="checkbox" id="cPhotoEx"> Тек шектен асқандар</label>
       </div>
       <div class="hint">А→В қиып өткен көлік — <b>келді</b>, В→А — <b>кетті</b>. Керісінше болса, «Бағытты ауыстыру» белгілеңіз.</div>
     </section>
@@ -122,6 +158,26 @@ tr.exc td{background:rgba(235,87,87,.12)}
   </div>
 </main>
 
+<main id="viewPhotos" hidden>
+  <section class="card">
+    <div class="ph-head">
+      <h2>📸 Фотофиксация</h2>
+      <select id="phFilter">
+        <option value="all">Барлығы</option>
+        <option value="ex">Шектен асқандар</option>
+        <option value="in">Келді</option>
+        <option value="out">Кетті</option>
+      </select>
+      <button id="phZip">⬇ ZIP жүктеу</button>
+      <button id="phClear">🗑 Тазалау</button>
+    </div>
+    <div class="ph-grid" id="phGrid"></div>
+    <div id="phEmpty">Әзірге сурет жоқ. Көліктің жылдамдығы өлшенген сәтте кадр автоматты түрде жақындатылып осында сақталады.</div>
+    <div class="hint">Суреттер осы браузерде сақталады (құрылғыдан құрылғыға көшпейді). iPhone-да: суретті ашып, басып тұрып «Фотоға сақтау».</div>
+  </section>
+</main>
+<div class="lb" id="lb" hidden><button class="x" id="lbX">✕</button><img id="lbImg" alt=""><div id="lbMeta" class="hint"></div><button id="lbDl">⬇ Жүктеу</button></div>
+
 <script>
 const $ = id => document.getElementById(id);
 const view = $('view'), vctx = view.getContext('2d');
@@ -136,7 +192,7 @@ const C = 4; // cell size in proc px
 const DEF_H = {A: [[0.08, 0.45], [0.92, 0.45]], B: [[0.08, 0.72], [0.92, 0.72]]};
 const DEF_DEMO = {A: [[240/640, 90/360], [240/640, 300/360]], B: [[400/640, 90/360], [400/640, 300/360]]};
 let lines = JSON.parse(JSON.stringify(DEF_H));
-const cfg = {dist: 10, limit: 90, thr: 28, minArea: 6, swap: false, mask: false};
+const cfg = {dist: 10, limit: 90, thr: 28, minArea: 6, swap: false, mask: false, photo: true, photoEx: false};
 
 try { const s = JSON.parse(localStorage.getItem('kt_cfg') || 'null'); if (s) Object.assign(cfg, s); } catch (e) {}
 function saveCfg() { try { localStorage.setItem('kt_cfg', JSON.stringify(cfg)); } catch (e) {} }
@@ -149,6 +205,8 @@ function bindRange(id, key, out) { const el = $(id); el.value = cfg[key]; $(out)
   el.oninput = () => { cfg.thr = 80 - +el.value; $('vThr').textContent = el.value; saveCfg(); }; } bindRange('cMin', 'minArea', 'vMin');
 $('cSwap').checked = cfg.swap; $('cSwap').onchange = e => { cfg.swap = e.target.checked; saveCfg(); };
 $('cMask').checked = cfg.mask; $('cMask').onchange = e => { cfg.mask = e.target.checked; saveCfg(); };
+$('cPhoto').checked = cfg.photo; $('cPhoto').onchange = e => { cfg.photo = e.target.checked; saveCfg(); };
+$('cPhotoEx').checked = cfg.photoEx; $('cPhotoEx').onchange = e => { cfg.photoEx = e.target.checked; saveCfg(); };
 
 function status(msg, err) { const s = $('status'); s.textContent = msg; s.className = err ? 'err' : ''; }
 
@@ -169,7 +227,7 @@ function stopAll() {
 }
 
 $('bDemo').onclick = () => {
-  stopAll(); kind = 'demo'; demoReset(); setup(640, 360);
+  stopAll(); kind = 'demo'; srcLabel = 'Демо'; demoReset(); setup(640, 360);
   lines = JSON.parse(JSON.stringify(DEF_DEMO)); cfg.dist = 10; $('cDist').value = 10;
   running = true; status('Демо: сынақ жолы. Әр көліктің үстінде оның нақты жылдамдығы жазылған — өлшеммен салыстырыңыз.');
   $('bPause').textContent = '⏸ Тоқтату';
@@ -181,7 +239,7 @@ $('bCam').onclick = async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('no api');
     const st = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'environment', width: {ideal: 1280}}, audio: false});
     video.srcObject = st; await video.play();
-    kind = 'camera'; setup(video.videoWidth || 1280, video.videoHeight || 720);
+    kind = 'camera'; srcLabel = 'Камера'; setup(video.videoWidth || 1280, video.videoHeight || 720);
     lines = JSON.parse(JSON.stringify(DEF_H));
     running = true; status('Камера қосылды. Камераны қозғалтпай бекітіңіз, сызықтарды жолға қойыңыз.');
     $('bPause').textContent = '⏸ Тоқтату';
@@ -195,7 +253,7 @@ $('file').onchange = e => {
   const f = e.target.files[0]; if (!f) return;
   stopAll(); video.srcObject = null; video.src = URL.createObjectURL(f); video.loop = false;
   video.onloadedmetadata = async () => {
-    kind = 'file'; setup(video.videoWidth, video.videoHeight);
+    kind = 'file'; srcLabel = f.name; setup(video.videoWidth, video.videoHeight);
     lines = JSON.parse(JSON.stringify(DEF_H));
     try { await video.play(); } catch (err) {}
     running = true; status('Бейне: ' + f.name + '. Сызықтарды жолға қойыңыз (бейнені басынан қайта жүктеуге болады).');
@@ -218,7 +276,7 @@ let hls = null;
 const isHlsUrl = u => /\.m3u8(\?|#|$)/i.test(u);
 
 function startStream(url, label, forceHls) {
-  stopAll(); kind = 'stream'; streamUrl = url; streamDims = null;
+  stopAll(); kind = 'stream'; srcLabel = label; streamUrl = url; streamDims = null;
   const live = forceHls || isHlsUrl(url);
   video.crossOrigin = 'anonymous'; video.loop = false;
   video.onloadedmetadata = () => {
@@ -475,7 +533,7 @@ function track(blobs, t) {
       const dts = Math.abs(tr.tB - tr.tA);
       const sp = dts > 0.05 ? cfg.dist / dts * 3.6 : null;
       tr.speed = (sp && sp < 300) ? sp : -1;
-      if (tr.speed > 0) setSpeed(tr.ev, sp);
+      if (tr.speed > 0) { setSpeed(tr.ev, sp); if (cfg.photo && (!cfg.photoEx || tr.ev.exceed)) takePhoto(curSrc, tr, tr.ev); }
     }
   }
   tracks.forEach((tr, i) => { if (!usedT.has(i)) tr.miss++; });
@@ -592,13 +650,154 @@ function loop() {
         status('Кадрды талдауға рұқсат жоқ (CORS): сервер бұл бейнені басқа сайттан оқуға рұқсат бермейді. Бейнені жүктеп алып, «Бейне файл» арқылы ашыңыз.', true);
         render(src); return;
       }
-      track(blobs, t);
+      curSrc = src; track(blobs, t);
       procTimes.push(t); while (procTimes.length > 2 && procTimes[procTimes.length - 1] - procTimes[0] > 3) procTimes.shift();
       lastT = t;
     }
   }
   render(src);
 }
+// ---------- Photo enforcement ----------
+let curSrc = null, srcLabel = 'Демо', photos = [], db = null;
+function dbOpen() {
+  return new Promise(res => {
+    try {
+      const r = indexedDB.open('road_camera', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('photos', {keyPath: 'id', autoIncrement: true});
+      r.onsuccess = () => { db = r.result; res(); };
+      r.onerror = () => res();
+    } catch (e) { res(); }
+  });
+}
+function dbReq(mode, fn) {
+  return new Promise(res => {
+    if (!db) return res(null);
+    try { const st = db.transaction('photos', mode).objectStore('photos'); const r = fn(st); r.onsuccess = () => res(r.result); r.onerror = () => res(null); }
+    catch (e) { res(null); }
+  });
+}
+
+function takePhoto(src, tr, ev) {
+  if (!src) return;
+  const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
+  if (!sw || !sh) return;
+  const k = sw / DW, b = tr.box;
+  const cx = (b.x + b.w / 2) * k, cy = (b.y + b.h / 2) * k;
+  let w = Math.max(b.w * k * 1.7, sw * 0.14), h = Math.max(b.h * k * 1.7, sh * 0.14);
+  if (w / h > 4 / 3) h = w * 3 / 4; else w = h * 4 / 3;
+  w = Math.min(w, sw); h = Math.min(h, sh);
+  const x = Math.min(Math.max(0, cx - w / 2), sw - w), y = Math.min(Math.max(0, cy - h / 2), sh - h);
+  const OW = 640, OH = 480, BAR = 64;
+  const c = document.createElement('canvas'); c.width = OW; c.height = OH + BAR;
+  const g = c.getContext('2d');
+  try {
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+    g.drawImage(src, x, y, w, h, 0, 0, OW, OH);            // zoomed crop on the car
+    // overview inset with the crop area marked
+    const iw = 170, ih = Math.round(iw * sh / sw), ix = OW - iw - 8, iy = 8;
+    g.fillStyle = '#000'; g.fillRect(ix - 2, iy - 2, iw + 4, ih + 4);
+    g.drawImage(src, 0, 0, sw, sh, ix, iy, iw, ih);
+    g.strokeStyle = '#eb5757'; g.lineWidth = 2; g.strokeRect(ix + x / sw * iw, iy + y / sh * ih, w / sw * iw, h / sh * ih);
+  } catch (e) { return; }
+  // info bar
+  g.fillStyle = ev.exceed ? '#b3261e' : '#0a1628'; g.fillRect(0, OH, OW, BAR);
+  g.fillStyle = '#fff'; g.textAlign = 'left'; g.font = 'bold 30px Manrope,sans-serif';
+  g.fillText(ev.speed + ' км/сағ', 14, OH + 42);
+  g.font = '600 14px Manrope,sans-serif'; g.textAlign = 'right';
+  g.fillText((ev.dir === 'in' ? 'Келді' : 'Кетті') + ' • #' + ev.id + ' • шек ' + cfg.limit + (ev.exceed ? ' • АСЫП КЕТТІ' : ''), OW - 12, OH + 26);
+  g.fillText(new Date().toLocaleString('ru-RU') + ' • ' + srcLabel, OW - 12, OH + 48);
+  c.toBlob(async blob => {
+    if (!blob) return;
+    const rec = {blob, speed: ev.speed, dir: ev.dir, exceed: ev.exceed, limit: cfg.limit, clock: new Date().toLocaleString('ru-RU'), ts: Date.now(), camera: srcLabel, track: ev.id};
+    const id = await dbReq('readwrite', st => st.add(rec));
+    rec.id = id != null ? id : 'm' + Date.now() + Math.random();
+    rec.url = URL.createObjectURL(blob);
+    photos.unshift(rec); ev.photo = rec;
+    if (ev.row) {
+      const cell = ev.row.querySelector('.sp'), a = document.createElement('span');
+      a.className = 'camlink'; a.textContent = ' 📷'; a.onclick = () => openLb(rec); cell.appendChild(a);
+    }
+    // keep the newest 1000
+    while (photos.length > 1000) { const old = photos.pop(); URL.revokeObjectURL(old.url); if (typeof old.id === 'number') dbReq('readwrite', st => st.delete(old.id)); }
+    renderPhotos();
+  }, 'image/jpeg', 0.88);
+}
+
+function photoName(p) {
+  const d = new Date(p.ts), z = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}_${p.speed}kmh_${p.dir === 'in' ? 'keldi' : 'ketti'}_${p.track}.jpg`;
+}
+function download(url, name) { const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+function filtered() {
+  const f = $('phFilter').value;
+  return photos.filter(p => f === 'all' || (f === 'ex' ? p.exceed : p.dir === f));
+}
+function renderPhotos() {
+  $('phCount').textContent = photos.length;
+  if ($('viewPhotos').hidden) return;
+  const list = filtered(), grid = $('phGrid');
+  $('phEmpty').style.display = list.length ? 'none' : '';
+  grid.innerHTML = '';
+  list.slice(0, 300).forEach(p => {
+    const el = document.createElement('div'); el.className = 'ph' + (p.exceed ? ' ex' : '');
+    el.innerHTML = `<img loading="lazy" alt=""><div class="m"><div><span class="sp">${p.speed}</span> км/сағ <span class="tag ${p.dir}">${p.dir === 'in' ? 'Келді' : 'Кетті'}</span></div>
+      <div class="mut">${p.clock} • #${p.track}</div><div class="mut">${p.camera}${p.exceed ? ' • шек ' + p.limit : ''}</div></div>
+      <div class="acts"><button class="d">⬇</button><button class="r">🗑</button></div>`;
+    el.querySelector('img').src = p.url;
+    el.querySelector('img').onclick = () => openLb(p);
+    el.querySelector('.d').onclick = () => download(p.url, photoName(p));
+    el.querySelector('.r').onclick = () => removePhoto(p);
+    grid.appendChild(el);
+  });
+}
+function removePhoto(p) {
+  photos = photos.filter(x => x !== p); URL.revokeObjectURL(p.url);
+  if (typeof p.id === 'number') dbReq('readwrite', st => st.delete(p.id));
+  renderPhotos();
+}
+let lbCur = null;
+function openLb(p) { lbCur = p; $('lbImg').src = p.url; $('lbMeta').textContent = `${p.speed} км/сағ • ${p.dir === 'in' ? 'Келді' : 'Кетті'} • ${p.clock} • ${p.camera}`; $('lb').hidden = false; }
+$('lbX').onclick = () => { $('lb').hidden = true; };
+$('lb').onclick = e => { if (e.target.id === 'lb') $('lb').hidden = true; };
+$('lbDl').onclick = () => lbCur && download(lbCur.url, photoName(lbCur));
+$('phFilter').onchange = renderPhotos;
+$('phZip').onclick = async () => {
+  const list = filtered(); if (!list.length) return;
+  if (!window.JSZip) { list.slice(0, 20).forEach(p => download(p.url, photoName(p))); return; }
+  $('phZip').textContent = '⏳ …';
+  const zip = new JSZip();
+  list.forEach(p => zip.file(photoName(p), p.blob));
+  zip.file('tizim.csv', '﻿Уақыт;Жылдамдық;Бағыт;Шек;Асып кетті;Камера;Файл\n' +
+    list.map(p => [p.clock, p.speed, p.dir === 'in' ? 'Келді' : 'Кетті', p.limit, p.exceed ? 'иә' : 'жоқ', p.camera, photoName(p)].join(';')).join('\n'));
+  const blob = await zip.generateAsync({type: 'blob'});
+  download(URL.createObjectURL(blob), 'fotofiksaciya_' + new Date().toISOString().slice(0, 10) + '.zip');
+  $('phZip').textContent = '⬇ ZIP жүктеу';
+};
+let clearArmed = false;
+$('phClear').onclick = () => {
+  if (!clearArmed) { clearArmed = true; $('phClear').textContent = 'Растау: бәрін өшіру?'; setTimeout(() => { clearArmed = false; $('phClear').textContent = '🗑 Тазалау'; }, 4000); return; }
+  clearArmed = false; $('phClear').textContent = '🗑 Тазалау';
+  photos.forEach(p => URL.revokeObjectURL(p.url)); photos = [];
+  dbReq('readwrite', st => st.clear()); renderPhotos();
+};
+
+// tabs (#photos in the address bar opens the photo section)
+function showView(v) {
+  $('viewCam').hidden = v !== 'cam'; $('viewPhotos').hidden = v !== 'photos';
+  $('tabCam').classList.toggle('act', v === 'cam'); $('tabPh').classList.toggle('act', v === 'photos');
+  if (v === 'photos') renderPhotos();
+}
+$('tabCam').onclick = () => { location.hash = ''; showView('cam'); };
+$('tabPh').onclick = () => { location.hash = 'photos'; showView('photos'); };
+window.addEventListener('hashchange', () => showView(location.hash === '#photos' ? 'photos' : 'cam'));
+
+dbOpen().then(async () => {
+  const all = (await dbReq('readonly', st => st.getAll())) || [];
+  photos = all.sort((a, b) => b.ts - a.ts).map(p => Object.assign(p, {url: URL.createObjectURL(p.blob)}));
+  renderPhotos();
+  showView(location.hash === '#photos' ? 'photos' : 'cam');
+});
+
 refreshStats();
 loop();
 </script>
