@@ -91,6 +91,7 @@ header{flex-wrap:wrap}
   <section class="card">
     <canvas id="view" width="960" height="540"></canvas>
     <video id="video" playsinline muted style="display:none"></video>
+    <video id="video2" playsinline muted style="display:none"></video>
     <div class="btns">
       <button class="pri" id="bDemo">▶ Демо</button>
       <button id="bCam">📷 Камера</button>
@@ -182,7 +183,8 @@ header{flex-wrap:wrap}
 const $ = id => document.getElementById(id);
 const view = $('view'), vctx = view.getContext('2d');
 const proc = document.createElement('canvas'), pctx = proc.getContext('2d', {willReadFrequently: true});
-const video = $('video');
+const V1 = $('video'), V2 = $('video2');
+let video = V1;   // the element currently being shown/analysed
 
 let kind = 'none', running = false, bg = null, gray = null, bgFrames = 0;
 let tracks = [], nextId = 1, events = [], lastT = null, cells = null;
@@ -221,9 +223,14 @@ function setup(w, h) {
 
 function stopAll() {
   running = false;
-  if (video.srcObject) { video.srcObject.getTracks().forEach(t => t.stop()); video.srcObject = null; }
-  video.pause(); video.onerror = null; video.onended = null;
+  relay.on = false; clearTimeout(relay.timer);
+  if (V1.srcObject) { V1.srcObject.getTracks().forEach(t => t.stop()); V1.srcObject = null; }
   if (hls) { hls.destroy(); hls = null; }
+  for (const v of [V1, V2]) {
+    v.pause(); v.onerror = v.onended = v.oncanplay = v.ontimeupdate = v.onloadedmetadata = null;
+  }
+  V2.removeAttribute('src'); V2.load();
+  video = V1;
 }
 
 $('bDemo').onclick = () => {
@@ -264,13 +271,48 @@ $('file').onchange = e => {
 };
 
 // ---------- Road camera stream (short MP4 clip that the server rewrites) ----------
-let streamUrl = null, streamLoadedAt = 0, streamDims = null;
+let streamUrl = null, streamDims = null;
 $('sCam').onchange = () => { $('sUrl').style.display = $('sCam').value === 'custom' ? '' : 'none'; };
-function loadStreamClip() {
-  if (kind !== 'stream' || !streamUrl) return;
-  streamLoadedAt = performance.now();
-  video.src = streamUrl + (streamUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
-  video.play().catch(() => {});
+// Seamless relay: two <video> elements. While one plays, the next clip is preloaded
+// into the hidden one and swapped in the moment the current clip ends — no black gap.
+const relay = {on: false, active: null, standby: null, ready: false, prefetched: false, base: 0, timer: null};
+function clipUrl() { return streamUrl + (streamUrl.includes('?') ? '&' : '?') + 't=' + Date.now(); }
+function relayLoad(v) {
+  v.crossOrigin = 'anonymous'; v.muted = true; v.playsInline = true; v.loop = false; v.preload = 'auto';
+  v.src = clipUrl(); v.load();
+}
+function relayAttach(v) {
+  v.oncanplay = () => { if (v === relay.standby) relay.ready = true; };
+  v.onended = () => { if (relay.on && v === relay.active) relaySwap(); };
+  v.ontimeupdate = () => {
+    if (!relay.on || v !== relay.active || relay.prefetched) return;
+    const d = v.duration;
+    if (isFinite(d) && d - v.currentTime < Math.min(3, d * 0.5)) { relay.prefetched = true; relay.ready = false; relayLoad(relay.standby); }
+  };
+  v.onerror = () => {
+    if (!relay.on) return;
+    clearTimeout(relay.timer);
+    if (v === relay.standby) { relay.ready = false; relay.timer = setTimeout(() => relay.on && relayLoad(v), 1500); }
+    else { status('Ағын үзілді, қайта қосылуда…', true); relay.timer = setTimeout(() => { if (relay.on) { relayLoad(v); v.play().catch(() => {}); } }, 2000); }
+  };
+}
+function relaySwap() {
+  const old = relay.active, nxt = relay.standby;
+  if (!relay.prefetched) { relay.prefetched = true; relay.ready = false; relayLoad(nxt); }
+  const go = () => {
+    if (!relay.on || relay.active !== old) return;
+    relay.base += isFinite(old.duration) ? old.duration : 0;
+    relay.active = nxt; relay.standby = old; relay.prefetched = false; relay.ready = false;
+    video = nxt; nxt.play().catch(() => {});
+  };
+  // until the next clip is ready the last frame of the old one stays on screen
+  if (relay.ready || nxt.readyState >= 3) go(); else nxt.addEventListener('canplay', go, {once: true});
+}
+function relayStart(onMeta) {
+  relay.on = true; relay.base = 0; relay.active = V1; relay.standby = V2; relay.ready = false; relay.prefetched = false;
+  video = V1; relayAttach(V1); relayAttach(V2);
+  V1.onloadedmetadata = onMeta;
+  relayLoad(V1); V1.play().catch(() => {});
 }
 let hls = null;
 const isHlsUrl = u => /\.m3u8(\?|#|$)/i.test(u);
@@ -279,20 +321,17 @@ function startStream(url, label, forceHls) {
   stopAll(); kind = 'stream'; srcLabel = label; streamUrl = url; streamDims = null;
   const live = forceHls || isHlsUrl(url);
   video.crossOrigin = 'anonymous'; video.loop = false;
-  video.onloadedmetadata = () => {
+  const onMeta = () => {
+    V1.onloadedmetadata = null;
     const d = video.videoWidth + 'x' + video.videoHeight;
     if (d !== streamDims) { streamDims = d; setup(video.videoWidth, video.videoHeight); lines = JSON.parse(JSON.stringify(DEF_H)); }
     running = true; $('bPause').textContent = '⏸ Тоқтату';
-    status('Ағын: ' + label + (live ? ' (HLS тікелей эфир).' : '. Әр ролик біткенде жаңасы жүктеледі.'));
+    status('Ағын: ' + label + (live ? ' (HLS тікелей эфир).' : ' — үздіксіз режим.'));
   };
+  video.onloadedmetadata = onMeta;
   video.onerror = () => status('Ағын ашылмады: сілтеме жұмыс істемейді немесе сервер басқа сайттан оқуға (CORS) рұқсат бермейді.', true);
   status('Ағын жүктелуде…');
-  if (!live) {
-    // short MP4 clip that the server keeps rewriting: reload when it ends (not more often than every 3 s)
-    video.onended = () => setTimeout(loadStreamClip, Math.max(0, 3000 - (performance.now() - streamLoadedAt)));
-    loadStreamClip();
-    return;
-  }
+  if (!live) { relayStart(onMeta); return; }
   if (window.Hls && Hls.isSupported()) {
     hls = new Hls({liveSyncDurationCount: 3});
     hls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) status('HLS қатесі: ' + d.details + '. Сілтемені немесе CORS рұқсатын тексеріңіз.', true); });
@@ -636,7 +675,7 @@ function loop() {
   let src = null, t = null;
   if (kind === 'demo') { src = demo.canvas; if (running) { demoStep(); t = demo.t; } }
   else if ((kind === 'camera' || kind === 'file' || kind === 'stream') && video.readyState >= 2) {
-    src = video; t = kind === 'camera' ? performance.now() / 1000 : video.currentTime;
+    src = video; t = kind === 'camera' ? performance.now() / 1000 : (relay.on ? relay.base : 0) + video.currentTime;
     if (!running) t = null;
   }
   if (src && t != null) {
