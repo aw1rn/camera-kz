@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ai-camera-v2';
+const CACHE_NAME = 'ai-camera-v3';
 const ASSETS = [
   './',
   './index.html',

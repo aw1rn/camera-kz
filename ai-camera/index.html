@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎥</text></svg>">
 <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎥</text></svg>">
-<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1/dist/face-api.js"></script>
+<script src="lib/face-api.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{height:100%}
@@ -114,11 +114,12 @@
   let frameCount = 0;
   let detecting = false;
 
-  const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1/model/';
+  const MODEL_URL = './model/';
 
   async function loadModels() {
     try {
-      statusEl.textContent = 'Загрузка...';
+      if (typeof faceapi === 'undefined') throw new Error('библиотека face-api не загрузилась');
+      statusEl.textContent = 'Загрузка ИИ...';
       await Promise.all([
         faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
         faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL),
@@ -129,7 +130,8 @@
       statusEl.textContent = '✅ Готово';
     } catch (err) {
       console.error(err);
-      loading.textContent = '❌ Ошибка моделей';
+      loading.style.display = 'block';
+      loading.textContent = '❌ ИИ не загрузился: ' + (err && err.message ? err.message : err);
       statusEl.textContent = 'Ошибка';
     }
   }
@@ -186,6 +188,7 @@
         ctx.scale(-1, 1);
       }
 
+      const labels = [];
       resized.forEach(det => {
         const box = det.detection.box;
         const age = Math.round(det.age);
@@ -206,13 +209,7 @@
         ctx.fillRect(box.x + box.width - c, box.y + box.height - 3, c, 3);
         ctx.fillRect(box.x + box.width - 3, box.y + box.height - c, 3, c);
 
-        const label = `${gender}, ${age} лет`;
-        ctx.font = 'bold 16px sans-serif';
-        const tw = ctx.measureText(label).width;
-        ctx.fillStyle = 'rgba(0,0,0,.8)';
-        ctx.fillRect(box.x, box.y - 28, tw + 12, 24);
-        ctx.fillStyle = '#00ff88';
-        ctx.fillText(label, box.x + 6, box.y - 10);
+        labels.push({text: `${gender}, ${age} лет`, box});
 
         if (det.landmarks) {
           ctx.fillStyle = '#667eea';
@@ -225,6 +222,18 @@
       });
 
       ctx.restore();
+
+      // text is drawn without the mirror transform, so it reads normally
+      const mirror = currentFacing === 'user';
+      ctx.font = 'bold 16px sans-serif';
+      labels.forEach(({text, box}) => {
+        const x = mirror ? overlay.width - box.x - box.width : box.x;
+        const tw = ctx.measureText(text).width;
+        ctx.fillStyle = 'rgba(0,0,0,.8)';
+        ctx.fillRect(x, box.y - 28, tw + 12, 24);
+        ctx.fillStyle = '#00ff88';
+        ctx.fillText(text, x + 6, box.y - 10);
+      });
       faceCountEl.textContent = detections.length;
     } catch (err) {
       console.error(err);
@@ -282,11 +291,14 @@
   };
   document.getElementById('btn-capture').onclick = capture;
 
-  (async () => {
-    await loadModels();
-    await startCamera('user');
-    loop();
-  })();
+  // camera does not wait for the AI: start both at once
+  loop();
+  startCamera('user');
+  loadModels();
+
+  // show any unexpected error on screen instead of failing silently
+  window.addEventListener('error', e => { statusEl.textContent = '❌ ' + e.message; });
+  window.addEventListener('unhandledrejection', e => { statusEl.textContent = '❌ ' + (e.reason && e.reason.message || e.reason); });
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
