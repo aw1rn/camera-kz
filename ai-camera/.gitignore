@@ -1,0 +1,28 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python (если запускаешь сервер)
+__pycache__/
+*.pyc
+server.py
+cert.pem
+key.pem
+
+# Logs
+*.log
+npm-debug.log
+
+# Node
+node_modules/
+
+# Env
+.env
+.env.local

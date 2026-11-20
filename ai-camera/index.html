@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0f0c29">
+<meta name="description" content="AI камера с распознаванием лиц, возраста и пола в реальном времени">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AI Камера">
+<title>🎥 AI Камера — Распознавание лиц</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎥</text></svg>">
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎥</text></svg>">
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1/dist/face-api.js"></script>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);
+    background-attachment:fixed;
+    color:#fff;min-height:100vh;padding:16px;
+    overflow-x:hidden;
+  }
+  .app{max-width:800px;margin:0 auto;text-align:center;padding-bottom:40px}
+  h1{margin-bottom:16px;font-weight:300;font-size:24px;letter-spacing:1px}
+  h1 span{background:linear-gradient(135deg,#667eea,#00ff88);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+  .controls{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:16px}
+  .btn{
+    padding:10px 16px;border:1px solid rgba(255,255,255,.2);
+    background:rgba(255,255,255,.05);color:#fff;border-radius:12px;
+    cursor:pointer;font-size:13px;backdrop-filter:blur(10px);
+    transition:all .3s;user-select:none;font-family:inherit;
+  }
+  .btn:hover{background:rgba(255,255,255,.15);transform:translateY(-2px)}
+  .btn:active{transform:scale(.96)}
+  .btn.active{background:linear-gradient(135deg,#667eea,#764ba2);border-color:transparent;box-shadow:0 4px 20px rgba(102,126,234,.5)}
+  .btn.primary{background:linear-gradient(135deg,#00ff88,#00b36b);color:#000;font-weight:600;border-color:transparent}
+  .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+  .camera-container{
+    position:relative;width:100%;max-width:640px;margin:0 auto;
+    aspect-ratio:4/3;background:#000;border-radius:16px;overflow:hidden;
+    box-shadow:0 20px 60px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.1);
+  }
+  #video{width:100%;height:100%;object-fit:contain;display:block;transform:scaleX(-1)}
+  #video.back{transform:none}
+  #overlay{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+  .loading{
+    position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    font-size:14px;background:rgba(0,0,0,.8);padding:12px 24px;
+    border-radius:12px;backdrop-filter:blur(10px);text-align:center;
+    animation:pulse 1.5s infinite;z-index:2;
+  }
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  .stats{display:flex;gap:16px;justify-content:center;margin:16px 0;font-size:13px;flex-wrap:wrap}
+  .stats span{background:rgba(255,255,255,.05);padding:6px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.1)}
+  .stats b{color:#00ff88;margin-left:4px}
+  #status{color:#667eea;font-weight:600}
+  .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px;margin-top:16px}
+  .gallery img{width:100%;border-radius:10px;box-shadow:0 5px 15px rgba(0,0,0,.3);animation:pop .4s ease}
+  @keyframes pop{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}
+  @media(max-width:600px){
+    body{padding:12px}
+    h1{font-size:20px}
+    .btn{padding:8px 12px;font-size:12px}
+    .stats{gap:8px;font-size:12px}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>🎥 AI <span>Камера</span></h1>
+
+  <div class="controls">
+    <button id="btn-front" class="btn active">🤳 Фронт</button>
+    <button id="btn-back" class="btn">📷 Задняя</button>
+    <button id="btn-toggle" class="btn">🔄 Переключить</button>
+    <button id="btn-capture" class="btn primary">📸 Снимок</button>
+  </div>
+
+  <div class="camera-container">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <div id="loading" class="loading">Загрузка моделей...</div>
+  </div>
+
+  <div class="stats">
+    <span>Лиц: <b id="face-count">0</b></span>
+    <span>FPS: <b id="fps">0</b></span>
+    <span id="status">Готово</span>
+  </div>
+
+  <div class="gallery" id="gallery"></div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  const video = document.getElementById('video');
+  const overlay = document.getElementById('overlay');
+  const ctx = overlay.getContext('2d');
+  const gallery = document.getElementById('gallery');
+  const loading = document.getElementById('loading');
+  const statusEl = document.getElementById('status');
+  const faceCountEl = document.getElementById('face-count');
+  const fpsEl = document.getElementById('fps');
+
+  let currentFacing = 'user';
+  let stream = null;
+  let modelsLoaded = false;
+  let lastFrameTime = performance.now();
+  let frameCount = 0;
+  let detecting = false;
+
+  const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1/model/';
+
+  async function loadModels() {
+    try {
+      statusEl.textContent = 'Загрузка...';
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL),
+        faceapi.nets.ageGenderNet.loadFromUri(MODEL_URL)
+      ]);
+      modelsLoaded = true;
+      loading.style.display = 'none';
+      statusEl.textContent = '✅ Готово';
+    } catch (err) {
+      console.error(err);
+      loading.textContent = '❌ Ошибка моделей';
+      statusEl.textContent = 'Ошибка';
+    }
+  }
+
+  async function startCamera(facing = 'user') {
+    try {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      currentFacing = facing;
+      statusEl.textContent = 'Камера...';
+
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      });
+
+      video.onloadedmetadata = () => {
+        overlay.width = video.videoWidth;
+        overlay.height = video.videoHeight;
+        document.querySelector('.camera-container').style.aspectRatio = video.videoWidth + '/' + video.videoHeight;
+      };
+      video.srcObject = stream;
+      await video.play();
+
+      video.classList.toggle('back', facing !== 'user');
+      statusEl.textContent = facing === 'user' ? '✅ Фронтальная' : '✅ Задняя';
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = '❌ Нет доступа';
+      loading.style.display = 'block';
+      loading.textContent = '❌ Камера недоступна: ' + err.message;
+    }
+  }
+
+  async function detectFaces() {
+    if (!modelsLoaded || video.readyState !== 4 || detecting) return;
+    detecting = true;
+
+    try {
+      const options = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
+      const detections = await faceapi
+        .detectAllFaces(video, options)
+        .withFaceLandmarks(true)
+        .withAgeAndGender();
+
+      const displaySize = { width: video.videoWidth, height: video.videoHeight };
+      faceapi.matchDimensions(overlay, displaySize);
+      const resized = faceapi.resizeResults(detections, displaySize);
+
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+      ctx.save();
+      if (currentFacing === 'user') {
+        ctx.translate(overlay.width, 0);
+        ctx.scale(-1, 1);
+      }
+
+      resized.forEach(det => {
+        const box = det.detection.box;
+        const age = Math.round(det.age);
+        const gender = det.gender === 'male' ? 'М' : 'Ж';
+
+        ctx.strokeStyle = '#00ff88';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+        ctx.fillStyle = '#00ff88';
+        const c = 15;
+        ctx.fillRect(box.x, box.y, c, 3);
+        ctx.fillRect(box.x, box.y, 3, c);
+        ctx.fillRect(box.x + box.width - c, box.y, c, 3);
+        ctx.fillRect(box.x + box.width - 3, box.y, 3, c);
+        ctx.fillRect(box.x, box.y + box.height - 3, c, 3);
+        ctx.fillRect(box.x, box.y + box.height - c, 3, c);
+        ctx.fillRect(box.x + box.width - c, box.y + box.height - 3, c, 3);
+        ctx.fillRect(box.x + box.width - 3, box.y + box.height - c, 3, c);
+
+        const label = `${gender}, ${age} лет`;
+        ctx.font = 'bold 16px sans-serif';
+        const tw = ctx.measureText(label).width;
+        ctx.fillStyle = 'rgba(0,0,0,.8)';
+        ctx.fillRect(box.x, box.y - 28, tw + 12, 24);
+        ctx.fillStyle = '#00ff88';
+        ctx.fillText(label, box.x + 6, box.y - 10);
+
+        if (det.landmarks) {
+          ctx.fillStyle = '#667eea';
+          det.landmarks.positions.forEach(p => {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+          });
+        }
+      });
+
+      ctx.restore();
+      faceCountEl.textContent = detections.length;
+    } catch (err) {
+      console.error(err);
+    } finally {
+      detecting = false;
+    }
+  }
+
+  function loop() {
+    if (modelsLoaded && video.readyState === 4) {
+      detectFaces();
+      frameCount++;
+      const now = performance.now();
+      if (now - lastFrameTime >= 1000) {
+        fpsEl.textContent = frameCount;
+        frameCount = 0;
+        lastFrameTime = now;
+      }
+    }
+    requestAnimationFrame(loop);
+  }
+
+  function capture() {
+    if (video.readyState !== 4) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const c = canvas.getContext('2d');
+    if (currentFacing === 'user') {
+      c.translate(canvas.width, 0);
+      c.scale(-1, 1);
+    }
+    c.drawImage(video, 0, 0);
+
+    const img = document.createElement('img');
+    img.src = canvas.toDataURL('image/png');
+    gallery.prepend(img);
+
+    while (gallery.children.length > 8) gallery.lastChild.remove();
+    statusEl.textContent = '📸 Сохранено';
+    setTimeout(() => statusEl.textContent = '✅ Готово', 1500);
+  }
+
+  function setActive(id) {
+    document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+    document.getElementById(id)?.classList.add('active');
+  }
+
+  document.getElementById('btn-front').onclick = () => { setActive('btn-front'); startCamera('user'); };
+  document.getElementById('btn-back').onclick = () => { setActive('btn-back'); startCamera('environment'); };
+  document.getElementById('btn-toggle').onclick = () => {
+    const next = currentFacing === 'user' ? 'environment' : 'user';
+    setActive(next === 'user' ? 'btn-front' : 'btn-back');
+    startCamera(next);
+  };
+  document.getElementById('btn-capture').onclick = capture;
+
+  (async () => {
+    await loadModels();
+    await startCamera('user');
+    loop();
+  })();
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(console.error);
+    });
+  }
+})();
+</script>
+</body>
+</html>
