@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#07121f">
+<meta name="description" content="AI детектор объектов (COCO-SSD): 80 видов объектов с камеры телефона прямо в браузере">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AI Детектор">
+<title>AI Детектор объектов — COCO-SSD</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
+<style>
+:root{--bg:#07121f;--card:#0e1d30;--line:#1d3350;--txt:#e9f0f8;--mut:#8ba2bd;--acc:#00e0a4;--veh:#ffc94d;--per:#00e0a4;--ani:#ff7ab6;--oth:#6aa8ff}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:radial-gradient(1200px 600px at 50% -200px,#12305a,var(--bg));color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh;padding:14px;padding-bottom:40px}
+.app{max-width:900px;margin:0 auto}
+header{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--acc),#0089ff);display:grid;place-items:center;font-size:20px}
+h1{font-size:19px;font-weight:700}
+header p{font-size:12px;color:var(--mut)}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.btn{font:inherit;font-size:14px;font-weight:600;padding:10px 14px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--txt);cursor:pointer;user-select:none}
+.btn:active{transform:scale(.97)}
+.btn.on{background:linear-gradient(135deg,#1b6fd8,#0b4fa8);border-color:transparent}
+.btn.pri{background:var(--acc);color:#002a1e;border-color:transparent}
+.btn input{display:none}
+.stage{position:relative;width:100%;aspect-ratio:4/3;background:#000;border-radius:16px;overflow:hidden;border:1px solid var(--line)}
+#video{width:100%;height:100%;object-fit:contain;display:block}
+#video.mirror{transform:scaleX(-1)}
+#overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.msg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.82);padding:14px 18px;border-radius:12px;text-align:center;font-size:14px;max-width:85%}
+.msg[hidden]{display:none}
+.bar{height:6px;background:#1d3350;border-radius:4px;margin-top:10px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .2s}
+.stats{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 12px;font-size:13px;color:var(--mut)}
+.stat b{color:var(--txt);margin-left:4px}
+#status{color:var(--acc)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-top:12px}
+.card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin-bottom:10px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:20px;background:#0a1626;border:1px solid var(--line);font-size:13px}
+.chip i{width:9px;height:9px;border-radius:50%}
+.chip b{font-size:15px}
+.empty{color:var(--mut);font-size:13px}
+.set{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:560px){.set{grid-template-columns:1fr}}
+label{font-size:13px;color:var(--mut);display:flex;flex-direction:column;gap:6px}
+input[type=range]{accent-color:var(--acc);width:100%}
+.groups{display:flex;flex-wrap:wrap;gap:6px}
+.groups .btn{padding:7px 11px;font-size:13px}
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.gallery figure{position:relative}
+.gallery .empty{grid-column:1/-1}
+.gallery img{width:100%;border-radius:10px;display:block;cursor:pointer;border:1px solid var(--line)}
+.gallery figcaption{font-size:11px;color:var(--mut);margin-top:3px}
+.hint{font-size:12px;color:var(--mut);line-height:1.5;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo">🎯</div>
+    <div><h1>AI Детектор объектов</h1><p>COCO-SSD • 80 видов объектов • всё работает в браузере</p></div>
+  </header>
+
+  <div class="row">
+    <button class="btn on" id="bBack">📷 Задняя</button>
+    <button class="btn" id="bFront">🤳 Фронт</button>
+    <label class="btn">🎞 Видео<input type="file" id="file" accept="video/*"></label>
+    <button class="btn" id="bPause">⏸ Пауза</button>
+    <button class="btn pri" id="bShot">📸 Снимок</button>
+  </div>
+
+  <div class="stage" id="stage">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="overlay"></canvas>
+    <div class="msg" id="msg">Загрузка ИИ-модели…<div class="bar"><i id="prog"></i></div><div id="progTxt" style="margin-top:6px;font-size:12px;color:#8ba2bd">0%</div></div>
+  </div>
+
+  <div class="stats">
+    <span class="stat">Объектов:<b id="sTotal">0</b></span>
+    <span class="stat">FPS:<b id="sFps">0</b></span>
+    <span class="stat">Движок:<b id="sBackend">—</b></span>
+    <span class="stat" id="status">Запуск…</span>
+  </div>
+
+  <section class="card">
+    <h2>Сейчас в кадре</h2>
+    <div class="chips" id="chips"><span class="empty">Пока ничего не найдено</span></div>
+  </section>
+
+  <section class="card">
+    <h2>Настройки</h2>
+    <div class="set">
+      <label>Уверенность ИИ: <span id="vScore">50%</span><input type="range" id="cScore" min="20" max="90" value="50"></label>
+      <label>Макс. объектов в кадре: <span id="vMax">20</span><input type="range" id="cMax" min="1" max="50" value="20"></label>
+    </div>
+    <div style="margin-top:12px">
+      <label style="margin-bottom:6px">Что показывать</label>
+      <div class="groups" id="groups"></div>
+    </div>
+    <div class="hint">Низкая уверенность — больше находок, но и больше ошибок. Первая загрузка модели ~18 МБ, потом она берётся из кэша и работает без интернета.</div>
+  </section>
+
+  <section class="card">
+    <h2>Снимки</h2>
+    <div class="gallery" id="gallery"><span class="empty">Нажмите «📸 Снимок» — кадр сохранится вместе с рамками. Нажмите на снимок, чтобы скачать.</span></div>
+  </section>
+</div>
+
+<script src="lib/tf.min.js"></script>
+<script src="lib/coco-ssd.min.js"></script>
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const video = $('video'), overlay = $('overlay'), ctx = overlay.getContext('2d');
+
+  // ---------- classes: Russian names + groups ----------
+  const RU = {
+    person:'человек', bicycle:'велосипед', car:'машина', motorcycle:'мотоцикл', airplane:'самолёт', bus:'автобус', train:'поезд', truck:'грузовик', boat:'лодка',
+    'traffic light':'светофор', 'fire hydrant':'гидрант', 'stop sign':'знак «Стоп»', 'parking meter':'паркомат', bench:'скамейка',
+    bird:'птица', cat:'кошка', dog:'собака', horse:'лошадь', sheep:'овца', cow:'корова', elephant:'слон', bear:'медведь', zebra:'зебра', giraffe:'жираф',
+    backpack:'рюкзак', umbrella:'зонт', handbag:'сумка', tie:'галстук', suitcase:'чемодан', frisbee:'фрисби', skis:'лыжи', snowboard:'сноуборд',
+    'sports ball':'мяч', kite:'воздушный змей', 'baseball bat':'бита', 'baseball glove':'перчатка', skateboard:'скейтборд', surfboard:'сёрф', 'tennis racket':'ракетка',
+    bottle:'бутылка', 'wine glass':'бокал', cup:'чашка', fork:'вилка', knife:'нож', spoon:'ложка', bowl:'миска', banana:'банан', apple:'яблоко',
+    sandwich:'сэндвич', orange:'апельсин', broccoli:'брокколи', carrot:'морковь', 'hot dog':'хот-дог', pizza:'пицца', donut:'пончик', cake:'торт',
+    chair:'стул', couch:'диван', 'potted plant':'растение', bed:'кровать', 'dining table':'стол', toilet:'унитаз', tv:'телевизор', laptop:'ноутбук',
+    mouse:'мышь', remote:'пульт', keyboard:'клавиатура', 'cell phone':'телефон', microwave:'микроволновка', oven:'духовка', toaster:'тостер',
+    sink:'раковина', refrigerator:'холодильник', book:'книга', clock:'часы', vase:'ваза', scissors:'ножницы', 'teddy bear':'плюшевый мишка',
+    'hair drier':'фен', toothbrush:'зубная щётка'
+  };
+  const VEH = ['bicycle','car','motorcycle','airplane','bus','train','truck','boat'];
+  const ANI = ['bird','cat','dog','horse','sheep','cow','elephant','bear','zebra','giraffe'];
+  const groupOf = c => c === 'person' ? 'per' : VEH.includes(c) ? 'veh' : ANI.includes(c) ? 'ani' : 'oth';
+  const COLOR = {per:'#00e0a4', veh:'#ffc94d', ani:'#ff7ab6', oth:'#6aa8ff'};
+  const GROUPS = [['per','🧍 Люди'],['veh','🚗 Транспорт'],['ani','🐾 Животные'],['oth','📦 Предметы']];
+  const ru = c => RU[c] || c;
+
+  // ---------- settings ----------
+  const cfg = {score: 0.5, max: 20, show: {per: true, veh: true, ani: true, oth: true}};
+  try { Object.assign(cfg, JSON.parse(localStorage.getItem('aiobj_cfg') || '{}')); } catch (e) {}
+  const save = () => { try { localStorage.setItem('aiobj_cfg', JSON.stringify(cfg)); } catch (e) {} };
+  $('cScore').value = Math.round(cfg.score * 100); $('vScore').textContent = $('cScore').value + '%';
+  $('cScore').oninput = e => { cfg.score = e.target.value / 100; $('vScore').textContent = e.target.value + '%'; save(); };
+  $('cMax').value = cfg.max; $('vMax').textContent = cfg.max;
+  $('cMax').oninput = e => { cfg.max = +e.target.value; $('vMax').textContent = e.target.value; save(); };
+  GROUPS.forEach(([g, name]) => {
+    const b = document.createElement('button'); b.className = 'btn' + (cfg.show[g] ? ' on' : ''); b.textContent = name;
+    b.onclick = () => { cfg.show[g] = !cfg.show[g]; b.classList.toggle('on', cfg.show[g]); save(); };
+    $('groups').appendChild(b);
+  });
+
+  const status = (t, err) => { $('status').textContent = t; $('status').style.color = err ? '#ff6b6b' : ''; };
+  const showMsg = html => { $('msg').hidden = false; $('msg').innerHTML = html; };
+  window.addEventListener('error', e => status('❌ ' + e.message, true));
+  window.addEventListener('unhandledrejection', e => status('❌ ' + (e.reason && e.reason.message || e.reason), true));
+
+  // ---------- model (with download progress) ----------
+  let model = null;
+  async function prefetch() {
+    // download model files once with a progress bar; the browser/service worker then serves them from cache
+    const manifest = await (await fetch('model/model.json')).json();
+    const files = manifest.weightsManifest.flatMap(g => g.paths);
+    let done = 0, total = 0;
+    const sizes = await Promise.all(files.map(f => fetch('model/' + f, {method: 'HEAD'}).then(r => +r.headers.get('content-length') || 0).catch(() => 0)));
+    total = sizes.reduce((a, b) => a + b, 0) || 18e6;
+    for (const f of files) {
+      const res = await fetch('model/' + f);
+      if (!res.body) { done += (await res.arrayBuffer()).byteLength; }
+      else {
+        const rd = res.body.getReader();
+        for (;;) { const {done: end, value} = await rd.read(); if (end) break; done += value.length;
+          const p = Math.min(99, Math.round(done / total * 100)); $('prog').style.width = p + '%'; $('progTxt').textContent = p + '% • ' + (done / 1e6).toFixed(1) + ' / ' + (total / 1e6).toFixed(1) + ' МБ'; }
+      }
+    }
+  }
+  async function loadModel() {
+    try {
+      if (typeof tf === 'undefined' || typeof cocoSsd === 'undefined') throw new Error('библиотеки TensorFlow не загрузились');
+      try { await tf.setBackend('webgl'); } catch (e) {}
+      await tf.ready();
+      $('sBackend').textContent = tf.getBackend();
+      status('Загрузка модели…');
+      try { await prefetch(); } catch (e) { /* progress is optional */ }
+      $('progTxt').textContent = 'Подготовка ИИ…';
+      model = await cocoSsd.load({modelUrl: 'model/model.json'});
+      // warm-up so the first real frame is fast
+      tf.tidy(() => {}); await model.detect(document.createElement('canvas'), 1, 0.9).catch(() => {});
+      $('msg').hidden = true;
+      status('✅ ИИ готов');
+    } catch (err) {
+      showMsg('❌ ИИ не загрузился:<br>' + (err && err.message || err));
+      status('Ошибка модели', true);
+    }
+  }
+
+  // ---------- sources ----------
+  let stream = null, facing = 'environment', paused = false, srcKind = 'camera';
+  async function startCamera(f) {
+    facing = f; srcKind = 'camera';
+    $('bBack').classList.toggle('on', f === 'environment'); $('bFront').classList.toggle('on', f === 'user');
+    try {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      video.removeAttribute('src');
+      stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: f, width: {ideal: 1280}, height: {ideal: 720}}, audio: false});
+      video.srcObject = stream; video.loop = false;
+      video.classList.toggle('mirror', f === 'user');
+      await video.play();
+      paused = false; $('bPause').textContent = '⏸ Пауза';
+      if (model) status(f === 'user' ? '✅ Фронтальная камера' : '✅ Задняя камера');
+    } catch (err) {
+      status('❌ Камера недоступна: ' + err.message, true);
+      if (model) showMsg('Камера недоступна.<br>Разрешите доступ к камере или выберите «🎞 Видео».');
+    }
+  }
+  $('bBack').onclick = () => startCamera('environment');
+  $('bFront').onclick = () => startCamera('user');
+  $('file').onchange = e => {
+    const f = e.target.files[0]; if (!f) return;
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    srcKind = 'file'; video.srcObject = null; video.src = URL.createObjectURL(f); video.loop = true;
+    video.classList.remove('mirror'); $('bBack').classList.remove('on'); $('bFront').classList.remove('on');
+    video.play().catch(() => {}); paused = false; $('bPause').textContent = '⏸ Пауза';
+    status('🎞 ' + f.name); e.target.value = '';
+  };
+  $('bPause').onclick = () => {
+    paused = !paused; $('bPause').textContent = paused ? '▶ Дальше' : '⏸ Пауза';
+    if (srcKind === 'file') paused ? video.pause() : video.play();
+  };
+  video.addEventListener('loadedmetadata', () => {
+    overlay.width = video.videoWidth; overlay.height = video.videoHeight;
+    $('stage').style.aspectRatio = video.videoWidth + '/' + video.videoHeight;
+  });
+
+  // ---------- detection loop ----------
+  let last = [], busy = false, frames = 0, tFps = performance.now();
+  async function detectOnce() {
+    if (!model || busy || paused || video.readyState < 2 || !video.videoWidth) return;
+    busy = true;
+    try {
+      const preds = await model.detect(video, cfg.max, cfg.score);
+      last = preds.filter(p => cfg.show[groupOf(p.class)]);
+      frames++;
+    } catch (e) { status('❌ ' + e.message, true); }
+    finally { busy = false; }
+  }
+  function drawBoxes(g, w, mirror, list, cssW) {
+    // on screen keep labels ~14 CSS px whatever the video resolution; on snapshots scale with the image
+    const k = cssW ? w / cssW : 1;
+    g.lineWidth = cssW ? 2.5 * k : Math.max(2, w / 320);
+    const fs = cssW ? Math.round(14 * k) : Math.max(13, Math.round(w / 45));
+    g.font = `bold ${fs}px -apple-system,Segoe UI,Roboto,sans-serif`;
+    for (const p of list) {
+      let [x, y, bw, bh] = p.bbox;
+      if (mirror) x = w - x - bw;
+      const col = COLOR[groupOf(p.class)];
+      g.strokeStyle = col; g.strokeRect(x, y, bw, bh);
+      const label = `${ru(p.class)} ${Math.round(p.score * 100)}%`;
+      const tw = g.measureText(label).width + 10, th = fs + 8;
+      const ly = y - th < 0 ? y : y - th;
+      g.fillStyle = col; g.fillRect(x, ly, tw, th);
+      g.fillStyle = '#04131f'; g.fillText(label, x + 5, ly + fs + 2);
+    }
+  }
+  function renderChips() {
+    const counts = {};
+    last.forEach(p => counts[p.class] = (counts[p.class] || 0) + 1);
+    const keys = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+    $('sTotal').textContent = last.length;
+    $('chips').innerHTML = keys.length ? keys.map(k => `<span class="chip"><i style="background:${COLOR[groupOf(k)]}"></i>${ru(k)} <b>${counts[k]}</b></span>`).join('')
+      : '<span class="empty">Пока ничего не найдено</span>';
+  }
+  let chipT = 0;
+  function loop() {
+    requestAnimationFrame(loop);
+    detectOnce();
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+    if (overlay.width) drawBoxes(ctx, overlay.width, srcKind === 'camera' && facing === 'user', last, overlay.clientWidth * Math.min(1, (overlay.width / overlay.height) / (overlay.clientWidth / overlay.clientHeight)));
+    const now = performance.now();
+    if (now - tFps >= 1000) { $('sFps').textContent = frames; frames = 0; tFps = now; }
+    if (now - chipT > 300) { renderChips(); chipT = now; }
+  }
+
+  // ---------- snapshot ----------
+  $('bShot').onclick = () => {
+    if (!video.videoWidth) return;
+    const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight;
+    const g = c.getContext('2d'), mirror = srcKind === 'camera' && facing === 'user';
+    if (mirror) { g.translate(c.width, 0); g.scale(-1, 1); }
+    g.drawImage(video, 0, 0); g.setTransform(1, 0, 0, 1, 0, 0);
+    drawBoxes(g, c.width, mirror, last);
+    c.toBlob(blob => {
+      const url = URL.createObjectURL(blob), d = new Date(), z = n => String(n).padStart(2, '0');
+      const name = `ai_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.jpg`;
+      const gal = $('gallery'); const e = gal.querySelector('.empty'); if (e) e.remove();
+      const fig = document.createElement('figure');
+      const what = [...new Set(last.map(p => ru(p.class)))].slice(0, 4).join(', ') || 'ничего';
+      fig.innerHTML = `<img alt=""><figcaption>${d.toLocaleTimeString('ru-RU')} • ${what}</figcaption>`;
+      fig.querySelector('img').src = url;
+      fig.querySelector('img').onclick = () => { const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); };
+      gal.prepend(fig);
+      while (gal.children.length > 24) gal.lastChild.remove();
+      status('📸 Снимок сохранён');
+    }, 'image/jpeg', 0.9);
+  };
+
+  // ---------- start: camera does not wait for the model ----------
+  loop();
+  startCamera('environment');
+  loadModel();
+
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+})();
+</script>
+</body>
+</html>

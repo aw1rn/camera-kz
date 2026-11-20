@@ -32,3 +32,12 @@
 
 
 Отдельный сайт для просмотра камер с настройкой изображения — папка [`doroga-live/`](doroga-live/).
+
+---
+
+## Приложения в репозитории
+| Приложение | Ссылка |
+|---|---|
+| 🚗 Жол камерасы — санақ және жылдамдық | https://aw1rn.github.io/camera-kz/ |
+| 🎯 AI Детектор объектов (COCO-SSD) | https://aw1rn.github.io/camera-kz/ai-objects/ |
+| 🎥 AI Камера — распознавание лиц | https://aw1rn.github.io/camera-kz/ai-camera/ |

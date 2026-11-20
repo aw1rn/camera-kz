@@ -1,0 +1,19 @@
+{
+  "name": "AI Детектор объектов — COCO-SSD",
+  "short_name": "AI Детектор",
+  "description": "Находит 80 видов объектов с камеры телефона прямо в браузере",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#07121f",
+  "theme_color": "#07121f",
+  "lang": "ru",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='110' fill='%2307121f'/><text x='256' y='350' font-size='300' text-anchor='middle'>🎯</text></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
